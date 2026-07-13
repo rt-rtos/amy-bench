@@ -1,0 +1,4 @@
+# Serial captures and abrun.py output are working artifacts, not fixtures.
+*.log
+abrun-out/
+__pycache__/

@@ -1,0 +1,16 @@
+# Two app slots, so an A/B run can hold both firmwares on the board at once:
+# abrun.py stages one build per slot and then alternates between them with a
+# boot-partition switch + reset (~1s) instead of a ~20s reflash between every
+# capture. Cheap repeats are the point - an A/B delta only means something next
+# to the run-to-run spread, and that needs samples.
+#
+# The app is well under 1M; 2M slots leave headroom for profile/LTO builds.
+# Bootloader rollback protection must stay off (it is, by default): the bench
+# never calls esp_ota_mark_app_valid_cancel_rollback(), so an OTA-booted app
+# would otherwise be rolled back on the next reset.
+# Name,   Type, SubType, Offset,   Size,  Flags
+nvs,      data, nvs,     0x9000,   24K,
+otadata,  data, ota,     0xf000,   8K,
+phy_init, data, phy,     0x11000,  4K,
+ota_0,    app,  ota_0,   0x20000,  2M,
+ota_1,    app,  ota_1,   0x220000, 2M,

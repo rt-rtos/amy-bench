@@ -7,12 +7,19 @@ idf_component_register(
 
 # Bake the repo revision into the run header so captures are self-describing.
 # Configure-time value: reconfigure (or clean) after committing to refresh it.
-execute_process(
-    COMMAND git -C ${CMAKE_CURRENT_LIST_DIR} describe --always --dirty --tags
-    OUTPUT_VARIABLE BENCH_GIT_REV
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-)
+#
+# Overridable (-D BENCH_GIT_REV=...) because the default describes the working
+# tree, which says nothing about a src/ tree supplied via AMY_SRC_DIR. abrun.py
+# stamps each side with the ref actually under test, so the two captures of an
+# A/B run are distinguishable in their headers.
+if(NOT DEFINED BENCH_GIT_REV)
+    execute_process(
+        COMMAND git -C ${CMAKE_CURRENT_LIST_DIR} describe --always --dirty --tags
+        OUTPUT_VARIABLE BENCH_GIT_REV
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+endif()
 if(NOT BENCH_GIT_REV)
     set(BENCH_GIT_REV "unknown")
 endif()

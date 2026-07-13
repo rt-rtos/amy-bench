@@ -84,6 +84,12 @@ static const char *const dx76_teardown[] = {
 };
 
 // --- fx_sine8: the sine8 material with reverb + chorus enabled ---------------
+// Renders different audio on each pass, by design of AMY rather than of this
+// scene: the reverb/chorus delay lines and filter states are zeroed only at
+// allocation, and the teardown below can silence the effects but not drain them
+// (see "Known AMY gap" in bench/README.md). Each pass is still bit-identical
+// across boots, so abcompare.py lines the passes up and the A/B output check
+// holds. Timing is unaffected. Do not "fix" this by dropping the scene.
 static const char *const fx_sine8_setup[] = {
     "h1Z",
     "k0.5Z",

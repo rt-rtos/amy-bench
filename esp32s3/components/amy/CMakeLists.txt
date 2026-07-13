@@ -1,7 +1,16 @@
 # ESP-IDF component wrapper around this repository's own src/ tree.
 # The bench compiles the fork's real sources in place - edit src/*.c,
 # rebuild, measure. No vendored copy, no sync step.
-get_filename_component(AMY_SRC_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../../src" ABSOLUTE)
+#
+# AMY_SRC_DIR can be overridden (-D AMY_SRC_DIR=...) to build against a src/
+# tree checked out elsewhere. tools/abrun.py uses this to build two firmwares
+# from two git refs with an otherwise byte-identical harness.
+if(NOT DEFINED AMY_SRC_DIR)
+    get_filename_component(AMY_SRC_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../../src" ABSOLUTE)
+endif()
+if(NOT EXISTS "${AMY_SRC_DIR}/amy.h")
+    message(FATAL_ERROR "AMY_SRC_DIR=${AMY_SRC_DIR} does not look like an AMY src/ tree.")
+endif()
 
 file(GLOB AMY_SRC_FILES LIST_DIRECTORIES OFF "${AMY_SRC_DIR}/*.c")
 
