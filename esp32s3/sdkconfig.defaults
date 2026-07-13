@@ -1,0 +1,31 @@
+# AMY bench defaults - chosen to match the S3-Amysynth production board/build
+# wherever it affects DSP timing (CPU freq, flash mode, PSRAM + XIP, -O2).
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# PSRAM present on the board; XIP parity with production (instruction fetch /
+# rodata via PSRAM cache affects DSP timing). AMY's own allocations stay in
+# internal RAM (default ram_caps_* - no TULIP/AMYBOARD macro defined).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+
+# The bench runs entirely in the main task: render + report, single core.
+# Core 1 mirrors production (AMY DSP renders on core 1 there).
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1=y
+
+# Free-running mode renders back-to-back without yielding, so the CPU1 idle
+# task starves and the task WDT warning fires every 5 s - each fire interrupts
+# CPU1 to collect a backtrace (skews timed blocks) and pollutes the JSONL
+# stream. Stop watching that idle task only; the task WDT itself and the
+# interrupt WDT remain enabled.
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n

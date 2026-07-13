@@ -1,0 +1,5 @@
+# Overlay: LTO profile. Apply with
+#   idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.lto" reconfigure build
+# Needs the patched gcc.cmake copied into
+# managed_components/espressif__cmake_utilities/ first (see bench/README.md).
+CONFIG_CU_GCC_LTO_ENABLE=y

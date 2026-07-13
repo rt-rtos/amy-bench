@@ -1,0 +1,62 @@
+menu "AMY Bench"
+
+    choice BENCH_PACING
+        prompt "Render pacing"
+        default BENCH_PACING_FREE
+        help
+            Free-running renders blocks back-to-back for maximum sensitivity
+            to per-block cost deltas. Paced mode ticks a GPTimer at the real
+            block period (AMY_BLOCK_SIZE / sample rate) and reports overruns,
+            measuring realistic headroom instead of raw throughput.
+
+        config BENCH_PACING_FREE
+            bool "Free-running (back-to-back blocks)"
+        config BENCH_PACING_PACED
+            bool "Real-time paced (GPTimer block clock)"
+    endchoice
+
+    config BENCH_SAMPLE_RATE
+        int "AMY sample rate (Hz)"
+        default 48000
+        help
+            Injected as -DAMY_SAMPLE_RATE. 48000 matches the S3-Amysynth
+            production firmware; upstream's generic default is 44100.
+
+    config BENCH_AMY_FLOAT
+        bool "Float DSP (AMY_USE_FLOAT) instead of upstream fixed-point"
+        default n
+        help
+            Selects AMY's float arithmetic paths. The ESP32-S3 has a hardware
+            FPU and the production firmware runs float; upstream defaults to
+            fixed-point. Only compare runs built with the same mode - the run
+            header records which one was used.
+
+    config BENCH_PROFILE
+        bool "Per-tag profiler build (AMY_DEBUG)"
+        default n
+        help
+            Compiles upstream's AMY_PROFILE instrumentation and emits a
+            per-tag breakdown after each scene. Adds a timestamp read at
+            every profiled call site, inflating totals - never compare a
+            profile-build number against a wall-build number.
+
+    config BENCH_PASSES
+        int "Passes over the scene list"
+        default 3
+        help
+            The whole scene list runs this many times; the host compare
+            script takes medians across passes.
+
+    config BENCH_SCENE_SELECT
+        int "Scene index to run (-1 = all)"
+        default -1
+
+    config BENCH_EMIT_PER_BLOCK
+        bool "Emit per-block JSONL records"
+        default n
+        help
+            Dumps one JSON line per measured block (after the scene finishes,
+            never inside the timed loop). Verbose; summaries are usually
+            enough.
+
+endmenu

@@ -1,0 +1,4 @@
+dependencies:
+  idf: ">=5.3"
+  # Only used by the opt-in LTO profile (sdkconfig.defaults.lto); inert otherwise.
+  espressif/cmake_utilities: "*"
