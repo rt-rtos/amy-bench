@@ -26,7 +26,8 @@ flowchart LR
     fw -->|"A into ota_0<br/>B into ota_1"| s3["ESP32-S3 board"]
     s3 -->|"JSONL over serial<br/>A B A B ..."| logs["repeated captures"]
     logs --> tools
-    tools --> report["per-scene deltas vs measured noise, CRC diff"]
+    tools --> report["compare.json<br/>per-scene deltas vs measured noise, CRC diff"]
+    report --> md["tools/abreport.py<br/>summary.md: the table you read"]
 ```
 
 ## Prerequisites
@@ -52,7 +53,10 @@ source $IDF_PATH/export.sh
 python ../tools/abrun.py --port /dev/ttyACM0 --head exp/faster-filter
 ```
 
-Logs and `compare.json` land in `bench/tools/abrun-out/` (`--outdir` to change).
+Logs, `compare.json` and `summary.md` land in `bench/tools/abrun-out/`
+(`--outdir` to change). `summary.md` is the table to read; `compare.json` is the
+evidence behind it (every sample, every CRC), kept so an archived run can be
+re-reported later without the board.
 
 `abrun.py` takes the *harness* from your working tree for both sides and swaps
 only `src/`, so the two firmwares are measured with the same ruler even though
@@ -99,6 +103,46 @@ saw_lpf6         442452     442450    -0.00%   ±0.01% within noise
 
 **noise** is the boot-to-boot spread of that side's own repeated measurements of
 the same firmware - what the number does when nothing changed.
+
+### `summary.md`
+
+That dump is the evidence; the answer is the table `abreport.py` folds it into,
+which `abrun.py` writes to `summary.md` and echoes when the run finishes:
+
+| Scene | A cyc | B cyc | delta | noise | headroom | verdict |
+|---|---:|---:|---:|---:|---|---|
+| juno6 | 1,159,437 | 1,128,461 | **-2.67%** | ±0.00% | 9.4% -> 11.9% | IMPROVEMENT |
+| dx76 | 765,568 | 672,689 | **-12.13%** | ±0.00% | 40.2% -> 47.5% | IMPROVEMENT |
+| idle | 34,967 | 29,072 | **-16.86%** | ±0.00% | 97.3% -> 97.7% | IMPROVEMENT |
+
+Each delta sits next to the noise that qualifies it and the headroom transition
+that gives it consequence, and rows are ordered **tightest scene first** - the
+one closest to overrunning the block budget is the one whose delta you need to
+read, whatever the others did. A closing count says how many scenes improved,
+how many regressed, and how many are left under the headroom floor
+(`--headroom-floor`, default 20%), because a win that leaves a scene at 11%
+headroom is still a scene one regression away from glitching.
+
+It recomputes nothing - every number and every verdict is abcompare's - so it
+can be re-run over an archived `compare.json` long after the board is gone:
+
+```bash
+python ../tools/abreport.py abrun-out/compare.json -o RESULTS.md
+```
+
+Given several reports it emits the **attribution matrix** instead: scenes down
+the side, one delta column per run. That is how a stack of A/B runs sharing a
+baseline separates one change's effect from another's - if run 1's delta plus
+run 2's composes to run 3's, the two changes are independent and additive.
+
+```bash
+python ../tools/abreport.py abrun-out/*/compare.json
+```
+
+A worked example: five runs over the ESP32-S3 PIE port, two of them measuring
+the same change against different baselines, showed the `filters.c` half of that
+port winning on nothing and costing `saw_lpf6` ~0.9% - so the shipping arm keeps
+only the block clears and copies. The matrix is what made that visible.
 
 | verdict | meaning |
 |---|---|

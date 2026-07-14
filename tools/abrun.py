@@ -393,6 +393,16 @@ def main():
                     "--threshold", str(args.threshold),
                     "--json", cmp_json])
 
+    # The dump above is the full evidence; this is the answer. Written next to
+    # compare.json so an archived run keeps its own readable summary, and
+    # echoed here so the last thing on screen after a 10-minute run is the
+    # table rather than the profiler tail.
+    summary_md = os.path.join(args.outdir, "summary.md")
+    subprocess.run([sys.executable, os.path.join(HERE, "abreport.py"),
+                    cmp_json, "-o", summary_md])
+    print()
+    subprocess.run([sys.executable, os.path.join(HERE, "abreport.py"), cmp_json])
+
 
 if __name__ == "__main__":
     main()
