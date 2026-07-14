@@ -49,6 +49,20 @@ flowchart LR
 - On WSL the board must be attached to the VM first (`usbipd attach` from an
   admin PowerShell), or no `/dev/ttyACM*` will exist.
 
+## Two app slots
+
+The partition table carries `ota_0` and `ota_1` rather than one `factory` app,
+so `abrun.py` keeps both firmwares on the board at once and alternates with a
+boot-slot switch and a reset (about a second) instead of a ~20s reflash. Cheap
+repeats are the point: the noise estimate needs samples. Interleaving A B A B
+rather than A A B B keeps board drift from masquerading as the change under
+test.
+
+Side A is flashed with the bootloader and partition table into `ota_0`; side B
+is written straight to `ota_1`'s offset with esptool. (Not `otatool.py
+write_ota_partition`: in ESP-IDF 6.0 that entry point is broken - it dispatches
+`input` to a function whose parameter is named `input_file` - so it dies with a
+`TypeError`.)
 ## Quick start
 
 One command builds both sides, flashes them into the two app slots, alternates
@@ -87,21 +101,59 @@ sides, so they cannot bias the comparison. Without them a baseline would
 silently build at 44100/fixed-point and compare, looking perfectly healthy,
 against a 48000/float head.
 
-## Running an experiment
+## What you can compare
 
-1. Branch from the ref you want to beat, and make **one** change in `src/`. One
-   experiment per branch keeps the attribution honest.
-2. Run the A/B. The baseline defaults to the merge base of your branch and
-   `main`, which is usually what you want:
+A side is any ref the AMY checkout can resolve, so the shape of a run is just the
+pair you name. `--head` is what you are testing, `--base` is what it has to beat.
 
-   ```bash
-   python ../tools/abrun.py --port /dev/ttyACM0 --head exp/my-change --repeat 5
-   ```
+**A branch against where it left `main`.** The default: omit `--base` and it
+resolves to the merge base of `--head` and `main`, which isolates the branch's own
+effect from anything that landed on `main` since it forked.
 
-3. Read the verdict (below). If a scene moved, ask whether its CRC moved too.
-4. To see *where* the time went, rerun the same pair with `--profile` for a
-   per-tag breakdown. Keep those captures separate: the instrumentation adds a
-   timestamp read per profiled call and inflates absolute numbers.
+```bash
+python ../tools/abrun.py --port /dev/ttyACM0 --head exp/faster-filter --repeat 5
+```
+
+**Your working tree, uncommitted.** The default `--head`. Edit `src/` in the AMY
+checkout, run, read the number - no commit, no stash, and the tree is never
+touched (each side is extracted with `git archive` into a scratch dir).
+
+```bash
+python ../tools/abrun.py --port /dev/ttyACM0 --repeat 5          # worktree vs merge-base
+python ../tools/abrun.py --port /dev/ttyACM0 --base my-branch    # worktree vs its own branch
+```
+
+That last one is the tight loop: it answers "did the edit I just made help?" while
+the edit is still in the buffer.
+
+**Two branches, neither of them yours.** Nothing privileges `main` or your own
+work. Any two refs the checkout can reach will do, which is what makes the harness
+usable on someone else's PR or across upstream releases.
+
+```bash
+python ../tools/abrun.py --port /dev/ttyACM0 --base upstream/main --head pr-1234
+python ../tools/abrun.py --port /dev/ttyACM0 --base 1.2.52 --head 1.2.58
+```
+
+**The same ref twice.** A null run: the delta is known to be zero, so whatever it
+reports is the instrument's own noise. See [Measured noise
+floor](#measured-noise-floor).
+
+```bash
+python ../tools/abrun.py --port /dev/ttyACM0 --base HEAD --head HEAD --repeat 5
+```
+
+Whatever the pair, two things hold. The *harness* comes from this repo for both
+sides and only `src/` is swapped, so the two firmwares are measured with the same
+ruler however far apart the refs are. And attribution is only as clean as the
+branch: a branch carrying one change tells you what that change cost, a branch
+carrying five tells you what five changes cost together. If you want the numbers
+to name a cause, keep the branch to one.
+
+Then read the verdict (below); if a scene moved, ask whether its CRC moved too.
+To see *where* the time went, rerun the same pair with `--profile` for a per-tag
+breakdown - keeping those captures separate, since the instrumentation adds a
+timestamp read per profiled call and inflates the absolute numbers.
 
 ## Reading the result
 
@@ -314,20 +366,7 @@ idf.py build
 
 Never compare an LTO capture against a non-LTO one.
 
-## Two app slots
 
-The partition table carries `ota_0` and `ota_1` rather than one `factory` app,
-so `abrun.py` keeps both firmwares on the board at once and alternates with a
-boot-slot switch and a reset (about a second) instead of a ~20s reflash. Cheap
-repeats are the point: the noise estimate needs samples. Interleaving A B A B
-rather than A A B B keeps board drift from masquerading as the change under
-test.
-
-Side A is flashed with the bootloader and partition table into `ota_0`; side B
-is written straight to `ota_1`'s offset with esptool. (Not `otatool.py
-write_ota_partition`: in ESP-IDF 6.0 that entry point is broken - it dispatches
-`input` to a function whose parameter is named `input_file` - so it dies with a
-`TypeError`.)
 
 ## Known AMY gap: no FX state reset
 
