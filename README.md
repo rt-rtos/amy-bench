@@ -1,26 +1,30 @@
 # amy-bench: on-target A/B performance benchmark (ESP32-S3)
 
-Measures what an AMY DSP change actually costs on hardware. The harness compiles
-this repository's `src/` tree in place as an ESP-IDF component, runs
-deterministic synth scenes headless, and reports per-block wall time, CPU
-cycles, and output CRCs over serial as JSONL. `abrun.py` drives the whole A/B:
-two git refs in, one report out.
+Measures what an [AMY](https://github.com/shorepine/amy) DSP change actually
+costs on hardware. The harness compiles an AMY `src/` tree in place as an ESP-IDF
+component, runs deterministic synth scenes headless, and reports per-block wall
+time, CPU cycles, and output CRCs over serial as JSONL. `abrun.py` drives the
+whole A/B: two git refs in, one report out.
 
-`src/` stays byte-identical to upstream except two documented `#ifndef` config
-guards - see [AMY-EDITS.md](AMY-EDITS.md). Everything else is additive under
-`bench/`, so merging upstream tags stays trivial.
+**This repo is the harness, not a copy of AMY.** It measures an AMY checkout you
+point it at, which is what lets a run compare any two refs that checkout can
+reach - your branch against `upstream/main`, two upstream tags, or a dirty
+working tree against its own merge-base. The only thing AMY itself needs is two
+documented `#ifndef` config guards, and `abrun.py` applies those to its own
+throwaway scratch tree, so upstream refs work untouched. See
+[AMY-EDITS.md](AMY-EDITS.md).
 
 ```mermaid
 flowchart LR
-    subgraph fork["amy fork"]
-        src["src/*.c *.h<br/>pristine + 2 ifndef guards"]
-        subgraph bench["bench/ (all new files)"]
-            comp["esp32s3/components/amy<br/>compiles a src/ tree in place"]
-            mainc["esp32s3/main/<br/>scenes, metrics, JSONL emitter"]
-            tools["tools/abrun.py<br/>capture.py, abcompare.py"]
-        end
+    subgraph amy["AMY checkout (--amy-repo)"]
+        src["src/*.c *.h<br/>any two refs"]
     end
-    src --> comp
+    subgraph harness["amy-bench (this repo)"]
+        comp["esp32s3/components/amy<br/>compiles a src/ tree in place"]
+        mainc["esp32s3/main/<br/>scenes, metrics, JSONL emitter"]
+        tools["tools/abrun.py<br/>capture.py, abcompare.py"]
+    end
+    src -->|"git archive<br/>one scratch tree per side"| comp
     comp --> fw["bench firmware, one per side"]
     mainc --> fw
     fw -->|"A into ota_0<br/>B into ota_1"| s3["ESP32-S3 board"]
@@ -32,6 +36,9 @@ flowchart LR
 
 ## Prerequisites
 
+- **An AMY checkout.** `git clone https://github.com/shorepine/amy`. Point the
+  bench at it with `--amy-repo`, or `$AMY_REPO`, or by cloning it as a sibling
+  `../amy` next to this repo, which is the default.
 - **ESP-IDF 6.0**, target `esp32s3`. Source its `export.sh` before anything else.
 - **An ESP32-S3 with 16 MB flash and octal PSRAM** (matching the production
   S3-Amysynth board), on a serial port.
@@ -48,22 +55,29 @@ One command builds both sides, flashes them into the two app slots, alternates
 between them, and reports:
 
 ```bash
-cd bench/esp32s3
+cd esp32s3
 source $IDF_PATH/export.sh
+python ../tools/abrun.py --port /dev/ttyACM0 --amy-repo ../../amy \
+                         --base upstream/main --head exp/faster-filter
+```
+
+With a sibling `../amy` clone, `--amy-repo` can be dropped:
+
+```bash
 python ../tools/abrun.py --port /dev/ttyACM0 --head exp/faster-filter
 ```
 
-Logs, `compare.json` and `summary.md` land in `bench/tools/abrun-out/`
-(`--outdir` to change). `summary.md` is the table to read; `compare.json` is the
-evidence behind it (every sample, every CRC), kept so an archived run can be
-re-reported later without the board.
+Logs, `compare.json` and `summary.md` land in `tools/abrun-out/` (`--outdir` to
+change). `summary.md` is the table to read; `compare.json` is the evidence behind
+it (every sample, every CRC), kept so an archived run can be re-reported later
+without the board.
 
-`abrun.py` takes the *harness* from your working tree for both sides and swaps
-only `src/`, so the two firmwares are measured with the same ruler even though
-`bench/` may not exist on the baseline ref at all. Each side's `src/` is
-extracted with `git archive` into a scratch tree, so your working tree is never
-touched - and `--head` defaults to the working tree, so uncommitted experiments
-are measurable without committing first.
+`abrun.py` takes the *harness* from this repo for both sides and swaps only
+`src/`, so the two firmwares are measured with the same ruler no matter how far
+apart the two AMY refs are. Each side's `src/` is extracted with `git archive`
+into a scratch tree, so the AMY working tree is never touched - and `--head`
+defaults to that working tree, so uncommitted experiments are measurable without
+committing first.
 
 Baselines older than the guards in [AMY-EDITS.md](AMY-EDITS.md) - which is most
 of them, since upstream carries neither - are handled automatically: `abrun.py`

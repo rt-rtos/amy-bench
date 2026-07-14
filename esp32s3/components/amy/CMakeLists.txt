@@ -1,15 +1,28 @@
-# ESP-IDF component wrapper around this repository's own src/ tree.
-# The bench compiles the fork's real sources in place - edit src/*.c,
-# rebuild, measure. No vendored copy, no sync step.
+# ESP-IDF component wrapper around an AMY src/ tree that lives outside this repo.
+# The bench measures AMY; it does not vendor it. Sources are compiled in place
+# from whatever checkout is named here - no copy, no sync step.
 #
-# AMY_SRC_DIR can be overridden (-D AMY_SRC_DIR=...) to build against a src/
-# tree checked out elsewhere. tools/abrun.py uses this to build two firmwares
-# from two git refs with an otherwise byte-identical harness.
+# AMY_SRC_DIR is resolved in this order:
+#   -D AMY_SRC_DIR=...  explicit, and what tools/abrun.py passes: it builds two
+#                       firmwares from two git refs with an otherwise identical
+#                       harness, so each side points at its own materialised tree.
+#   $AMY_REPO/src       the AMY checkout used for a plain `idf.py build`.
+#   ../amy/src          a sibling clone next to this repo.
 if(NOT DEFINED AMY_SRC_DIR)
-    get_filename_component(AMY_SRC_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../../src" ABSOLUTE)
+    if(DEFINED ENV{AMY_REPO})
+        get_filename_component(AMY_SRC_DIR "$ENV{AMY_REPO}/src" ABSOLUTE)
+    else()
+        get_filename_component(AMY_SRC_DIR "${CMAKE_CURRENT_LIST_DIR}/../../../../amy/src" ABSOLUTE)
+    endif()
 endif()
 if(NOT EXISTS "${AMY_SRC_DIR}/amy.h")
-    message(FATAL_ERROR "AMY_SRC_DIR=${AMY_SRC_DIR} does not look like an AMY src/ tree.")
+    message(FATAL_ERROR
+        "AMY_SRC_DIR=${AMY_SRC_DIR} does not look like an AMY src/ tree.\n"
+        "This harness is a separate repo from AMY. Clone AMY and point the build "
+        "at it:\n"
+        "    git clone https://github.com/shorepine/amy\n"
+        "    AMY_REPO=../amy idf.py build\n"
+        "or pass -D AMY_SRC_DIR=/path/to/amy/src explicitly.")
 endif()
 
 file(GLOB AMY_SRC_FILES LIST_DIRECTORIES OFF "${AMY_SRC_DIR}/*.c")

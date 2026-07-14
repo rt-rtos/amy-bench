@@ -144,7 +144,7 @@ def noise_of(side, scene, field):
 # again. A scene's teardown can silence an effect but not drain it - the tail
 # freezes in the buffers - so each pass starts the reverb from the previous
 # pass's leftovers and renders different audio. See "Known AMY gap" in
-# bench/README.md. This is not measurement error: each pass is bit-identical
+# README.md. This is not measurement error: each pass is bit-identical
 # across boots, so the audio is still fully comparable A-vs-B pass by pass.
 PASS_VARYING_SCENES = {
     "fx_sine8": "reverb/chorus state carries between passes (no FX reset in AMY)",

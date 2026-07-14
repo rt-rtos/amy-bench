@@ -1,13 +1,17 @@
 # amy-bench (ESP32-S3) - Claude Code Instructions
 
-On-target A/B benchmark for this repo's AMY sources. See `../README.md` for
-the workflow and `../AMY-EDITS.md` for the only permitted `src/` deviations.
+On-target A/B benchmark for AMY. The sources under test live in a separate AMY
+checkout, not in this repo - see `../README.md` for the workflow and
+`../AMY-EDITS.md` for the only permitted `src/` deviations.
 
 ## Toolchain / build
 
 - ESP-IDF 6.0, target `esp32s3`, board: ESP32-S3 with 16 MB flash + octal PSRAM.
-- Environment: `source /home/fatta/.espressif/release-v6.0/esp-idf/export.sh`
-  and `export IDF_PYTHON_ENV_PATH=/home/fatta/.espressif/python_env/idf6.0_py3.14_env`.
+- Environment: source the ESP-IDF `export.sh` for a v6.0 install, and make sure
+  `IDF_PYTHON_ENV_PATH` points at that install's python env (the capture stage
+  needs its pyserial).
+- AMY sources: `AMY_REPO=/path/to/amy`, or a sibling `../amy` clone, or an
+  explicit `-D AMY_SRC_DIR=/path/to/amy/src`.
 - Build: `idf.py build` from this directory. LTO profile: see `../README.md`
   (needs the patched `gcc.cmake` copied into `managed_components/`).
 - `flash` REPLACES whatever firmware is on the board (including its partition

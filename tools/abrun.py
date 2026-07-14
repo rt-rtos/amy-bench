@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
 """Automate an on-target A/B run: two git refs, one board, one report.
 
+The refs come from an AMY checkout you point this at (--amy-repo, $AMY_REPO, or a
+sibling ../amy). This repo is the harness, not a copy of AMY, so the refs under
+test can be anything that checkout can reach - including upstream ones.
+
 Usage (with the ESP-IDF environment sourced):
-    abrun.py --port /dev/ttyACM0                       # working tree vs merge-base
+    abrun.py --port /dev/ttyACM0                       # AMY working tree vs merge-base
     abrun.py --port /dev/ttyACM0 --head exp/faster-filter
+    abrun.py --port /dev/ttyACM0 --base upstream/main --head origin/my-change
     abrun.py --port /dev/ttyACM0 --base HEAD --head HEAD --repeat 5   # noise floor
 
 What it does, and why each step is the way it is:
 
 1.  Materialises each side's src/ with `git archive` into a scratch dir. Read-only
-    by construction, so unlike switching branches it cannot disturb your working
-    tree - and the working tree is where the *harness* comes from, so both sides
-    are measured with the same ruler even though bench/ may not exist on the
-    baseline ref at all.
+    by construction, so unlike switching branches it cannot disturb the AMY
+    working tree - and the *harness* always comes from this repo, so both sides
+    are measured with the same ruler no matter how far apart the two AMY refs are.
 
 2.  Refuses to build a src/ tree that lacks the two `#ifndef` guards from
-    bench/AMY-EDITS.md. Without them a `-DAMY_SAMPLE_RATE=48000` compile
-    definition is silently clobbered by amy.h's own later `#define` and
-    AMY_USE_FLOAT is ignored, so the side would build at 44100/fixed and compare
-    clean against a 48000/float side. That failure produces plausible numbers,
-    which makes it far more dangerous than a build error.
+    AMY-EDITS.md. Without them a `-DAMY_SAMPLE_RATE=48000` compile definition is
+    silently clobbered by amy.h's own later `#define` and AMY_USE_FLOAT is
+    ignored, so the side would build at 44100/fixed and compare clean against a
+    48000/float side. That failure produces plausible numbers, which makes it far
+    more dangerous than a build error.
 
 3.  Flashes BOTH firmwares once - side A into ota_0, side B into ota_1 - then
     alternates between them with a boot-partition switch and a reset. Swapping
@@ -41,11 +45,17 @@ import tarfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BENCH_DIR = os.path.abspath(os.path.join(HERE, "..", "esp32s3"))
-REPO_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
+BENCH_REPO = os.path.abspath(os.path.join(HERE, ".."))
+BENCH_DIR = os.path.join(BENCH_REPO, "esp32s3")
 
-# The two build-config guards from bench/AMY-EDITS.md. A src/ tree without these
-# cannot honour the bench's compile definitions - see the module docstring.
+# The AMY checkout that A/B refs are resolved against. This harness measures AMY;
+# it does not vendor it. Keeping them separate is what lets a run compare
+# arbitrary refs - including upstream ones - rather than only whatever history a
+# vendored copy happened to carry. Set by resolve_amy_repo() before first use.
+AMY_REPO = None
+
+# The two build-config guards from AMY-EDITS.md. A src/ tree without these cannot
+# honour the bench's compile definitions - see the module docstring.
 REQUIRED_GUARDS = [
     ("#ifndef AMY_SAMPLE_RATE", "AMY_SAMPLE_RATE overridable"),
     ("#ifndef AMY_USE_FLOAT", "float mode selectable"),
@@ -54,9 +64,51 @@ REQUIRED_GUARDS = [
 WORKTREE = "worktree"
 
 
+def resolve_amy_repo(cli_path):
+    """Locate the AMY checkout: --amy-repo, then $AMY_REPO, then a sibling ../amy.
+
+    An explicit choice that does not resolve is an error rather than a fallback:
+    silently benching a different tree than the one asked for is the kind of
+    failure that still produces a plausible-looking report.
+    """
+    candidates = [(cli_path, "--amy-repo"),
+                  (os.environ.get("AMY_REPO"), "$AMY_REPO"),
+                  (os.path.join(os.path.dirname(BENCH_REPO), "amy"), "sibling ../amy")]
+
+    for cand, whence in candidates:
+        if not cand:
+            continue
+        path = os.path.abspath(os.path.expanduser(cand))
+        top = subprocess.run(["git", "-C", path, "rev-parse", "--show-toplevel"],
+                             capture_output=True, text=True)
+        if top.returncode != 0:
+            if whence == "sibling ../amy":
+                continue          # a guess, not a request: keep looking
+            sys.exit(f"[abrun] {whence}: {path} is not a git repository.")
+        root = top.stdout.strip()
+
+        on_disk = os.path.exists(os.path.join(root, "src", "amy.h"))
+        in_head = subprocess.run(["git", "-C", root, "cat-file", "-e", "HEAD:src/amy.h"],
+                                 capture_output=True).returncode == 0
+        if not (on_disk or in_head):
+            if whence == "sibling ../amy":
+                continue
+            sys.exit(f"[abrun] {whence}: {root} has no src/amy.h - "
+                     f"is it an AMY checkout?")
+
+        print(f"[abrun] AMY repo: {root}  ({whence})")
+        return root
+
+    sys.exit("[abrun] no AMY checkout found. This harness is a separate repo from\n"
+             "        AMY, so point it at a clone:\n\n"
+             "            git clone https://github.com/shorepine/amy\n"
+             "            python tools/abrun.py --amy-repo ../amy ...\n\n"
+             "        or set $AMY_REPO, or place the clone at ../amy next to this repo.")
+
+
 def run(cmd, **kw):
     """Run a command, echoing it, and abort the whole tool if it fails."""
-    kw.setdefault("cwd", REPO_ROOT)
+    kw.setdefault("cwd", BENCH_REPO)
     printable = " ".join(str(c) for c in cmd)
     print(f"  $ {printable}", flush=True)
     r = subprocess.run(cmd, **kw)
@@ -65,8 +117,9 @@ def run(cmd, **kw):
     return r
 
 
-def git(*args, cwd=REPO_ROOT):
-    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+def git(*args, cwd=None):
+    r = subprocess.run(["git", *args], cwd=cwd or AMY_REPO,
+                       capture_output=True, text=True)
     if r.returncode != 0:
         sys.exit(f"[abrun] git {' '.join(args)}: {r.stderr.strip()}")
     return r.stdout.strip()
@@ -82,13 +135,13 @@ def materialise_src(ref, dest):
     """Put `ref`'s src/ tree at dest/src. For the working tree, use it in place
     so uncommitted experiments are measurable without a commit."""
     if ref == WORKTREE:
-        return os.path.join(REPO_ROOT, "src")
+        return os.path.join(AMY_REPO, "src")
 
     os.makedirs(dest, exist_ok=True)
     tar_path = os.path.join(dest, "src.tar")
     with open(tar_path, "wb") as f:
         r = subprocess.run(["git", "archive", ref, "src/"],
-                           cwd=REPO_ROOT, stdout=f)
+                           cwd=AMY_REPO, stdout=f)
     if r.returncode != 0:
         sys.exit(f"[abrun] git archive {ref} failed - is it a valid ref?")
     with tarfile.open(tar_path) as t:
@@ -126,7 +179,7 @@ def ensure_guards(src_dir, ref, in_place):
     Rather than require every baseline ref to carry the guards (upstream does
     not, and merge bases are old), wrap the offending #defines here, in the
     throwaway tree git archive just produced. The transform is what
-    bench/AMY-EDITS.md describes: each #define becomes conditional. It changes
+    AMY-EDITS.md describes: each #define becomes conditional. It changes
     zero instructions unless a define is injected - and the same definitions are
     injected on both sides - so it cannot bias the comparison.
 
@@ -150,7 +203,7 @@ def ensure_guards(src_dir, ref, in_place):
             f"        ignored, so this side would build at 44100/fixed-point.\n"
             f"        abrun patches a *materialised* baseline tree automatically,\n"
             f"        but it will not edit your working tree. Apply the two\n"
-            f"        #ifndef guards from bench/AMY-EDITS.md.\n")
+            f"        #ifndef guards from AMY-EDITS.md.\n")
 
     patched = re.sub(
         r"^(#define\s+AMY_SAMPLE_RATE\s+\d+.*)$",
@@ -166,7 +219,7 @@ def ensure_guards(src_dir, ref, in_place):
         sys.exit(
             f"\n[abrun] could not apply the build-config guard(s) for "
             f"{', '.join(still)} to ref '{ref}'.\n\n"
-            f"        amy.h no longer matches the shape bench/AMY-EDITS.md\n"
+            f"        amy.h no longer matches the shape AMY-EDITS.md\n"
             f"        describes, so the guards must be applied by hand rather\n"
             f"        than guessed at. Refusing to measure a tree whose sample\n"
             f"        rate and arithmetic mode cannot be verified.\n")
@@ -274,8 +327,11 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", help="serial port, e.g. /dev/ttyACM0")
+    ap.add_argument("--amy-repo", default=None,
+                    help="AMY checkout the refs are resolved against "
+                         "(default: $AMY_REPO, else a sibling ../amy)")
     ap.add_argument("--head", default=WORKTREE,
-                    help="ref under test (default: the working tree, so "
+                    help="ref under test (default: the AMY working tree, so "
                          "uncommitted experiments work)")
     ap.add_argument("--base", default=None,
                     help="baseline ref (default: merge-base of head and main)")
@@ -286,7 +342,7 @@ def main():
                     help="where to write logs (default: bench/tools/abrun-out)")
     ap.add_argument("--scratch", default=None,
                     help="scratch dir for materialised src/ trees")
-    # 0.5% is ~7x the measured code-layout floor (see bench/README.md): two
+    # 0.5% is ~7x the measured code-layout floor (see README.md): two
     # builds of identical sources, relinked, differ by up to 0.07%. Boot-to-boot
     # noise on one binary is far smaller (0.01%), but a threshold cannot be set
     # from that - both sides of a real A/B are different binaries, so layout
@@ -314,10 +370,13 @@ def main():
     if not args.build_only and not args.port:
         ap.error("--port is required unless --build-only")
 
+    global AMY_REPO
+    AMY_REPO = resolve_amy_repo(args.amy_repo)
+
     env = dict(os.environ)
     if "IDF_PATH" not in env:
         sys.exit("[abrun] IDF_PATH is not set - source the ESP-IDF export.sh "
-                 "first (see bench/esp32s3/CLAUDE.md).")
+                 "first (see esp32s3/CLAUDE.md).")
 
     # Check everything the capture stage needs *before* the builds, which take
     # minutes. pyserial lives in the IDF python env, not necessarily in whatever
@@ -330,7 +389,7 @@ def main():
                      f"pyserial, so the capture stage would fail after the "
                      f"builds. Re-run with the IDF python env:\n"
                      f"    $IDF_PYTHON_ENV_PATH/bin/python "
-                     f"{os.path.relpath(__file__, REPO_ROOT)} ...")
+                     f"{os.path.relpath(__file__, BENCH_REPO)} ...")
         if not os.path.exists(args.port):
             sys.exit(f"[abrun] no such port: {args.port}")
 
@@ -345,7 +404,7 @@ def main():
         head_ref = "HEAD" if head == WORKTREE else head
         base = git("merge-base", head_ref, "main")
         print(f"[abrun] baseline defaults to merge-base({head_ref}, main) = "
-              f"{base[:12]}")
+              f"{base[:12]} (in {AMY_REPO})")
 
     rev_a, rev_b = describe(base), describe(head)
     print(f"[abrun] A (base) = {base}  -> {rev_a}")

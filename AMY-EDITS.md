@@ -1,10 +1,19 @@
-# src/ edits carried by the bench branch
+# The two src/ edits the bench needs
 
-The bench rule is that `src/` stays byte-identical to upstream so DSP experiment
-diffs are 1:1 PR-able. Exactly two build-config exceptions exist, both
-`#ifndef` guards that change nothing unless a compile definition is injected.
-Both are upstream-PR candidates in their own right (config hygiene, no
-behavior change for existing builds).
+The bench measures AMY unmodified: every ref it builds is upstream's, so a DSP
+experiment's diff stays 1:1 PR-able. Exactly two build-config exceptions exist,
+both `#ifndef` guards that change nothing unless a compile definition is
+injected.
+
+Upstream carries neither, so **you do not need to patch your AMY checkout**:
+`abrun.py` applies both to the throwaway scratch tree it extracts per side, never
+to the checkout itself. They are documented here because they are load-bearing -
+a `src/` tree without them cannot honour the bench's compile definitions, and the
+resulting run would compare a 44100/fixed side against a 48000/float one and look
+perfectly clean doing it.
+
+Both are upstream-PR candidates in their own right (config hygiene, no behavior
+change for existing builds).
 
 ## 1. `AMY_SAMPLE_RATE` overridable (`src/amy.h`)
 
