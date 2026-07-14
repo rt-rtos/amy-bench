@@ -26,10 +26,16 @@ if(NOT AMY_SRC_FILES)
     message(FATAL_ERROR "No AMY sources found in ${AMY_SRC_DIR}.")
 endif()
 
+# pie_dsp holds the ESP32-S3 PIE (128-bit SIMD) kernels that an AMY src/ tree can
+# route its block clears/copies and block scans through, via a src/amy_simd.h shim.
+# Listed unconditionally so the harness is one ruler for every arm: a src/ tree that
+# does not include amy_simd.h never references a pie_dsp symbol, so the component's
+# objects are simply not pulled out of the static library and the baseline's codegen
+# is untouched.
 idf_component_register(
     SRCS ${AMY_SRC_FILES}
     INCLUDE_DIRS "${AMY_SRC_DIR}"
-    REQUIRES esp_timer esp_driver_uart esp_driver_i2s esp_driver_i2c esp_driver_gpio
+    REQUIRES esp_timer esp_driver_uart esp_driver_i2s esp_driver_i2c esp_driver_gpio pie_dsp
 )
 
 # Build-config injection - src/ stays pristine (see bench/AMY-EDITS.md for the
