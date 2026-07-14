@@ -184,39 +184,45 @@ deciding which of the two it is.
 
 ## Baseline
 
-What the scenes cost on a stock ESP32-S3 at AMY `1.2.52`, as a reference to read
-your own numbers against. Measured with a null run (`--base HEAD --head HEAD`),
-so the delta column is a self-check on the instrument rather than a result:
-identical sources on both sides, and every scene comes back within its own noise
-with identical CRCs.
+What the scenes cost on a stock ESP32-S3 at AMY `1.2.58-1-g06a4dd3`, as a
+reference to read your own numbers against. Measured with a null run
+(`--base HEAD --head HEAD`, 5 captures per side), so the delta column is a
+self-check on the instrument rather than a result: both sides are built from
+identical sources, and every scene comes back inside its own noise with identical
+CRCs.
 
 240 MHz · fixed-point · 48000 Hz · block 256 · free pacing · 3 passes ·
-2 captures/side · block budget **5333 us**
+5 captures/side · block budget **5333 us**
 
 | Scene | cycles | us | headroom | null-run delta (noise) |
 |---|---:|---:|---:|---|
-| juno6 | 1,191,825 | 4965 | **6.9%** | -0.01% (±0.01%) |
-| dx76 | 845,334 | 3522 | 34.0% | -0.00% (±0.01%) |
-| saw_lpf6 | 448,979 | 1870 | 64.9% | +0.00% (±0.00%) |
-| fx_sine8 | 393,525 | 1639 | 69.3% | -0.03% (±0.01%) |
-| sine8 | 170,284 | 709 | 86.7% | +0.00% (±0.00%) |
-| pcm4 | 142,377 | 592 | 88.9% | -0.01% (±0.01%) |
-| idle | 35,612 | 148 | 97.2% | +0.00% (±0.00%) |
+| juno6 | 1,159,320 | 4830 | **9.4%** | +0.01% (±0.01%) |
+| dx76 | 765,564 | 3189 | 40.2% | -0.00% (±0.01%) |
+| saw_lpf6 | 442,452 | 1843 | 65.4% | -0.00% (±0.01%) |
+| fx_sine8 | 386,559 | 1610 | 69.8% | -0.00% (±0.01%) |
+| sine8 | 162,847 | 678 | 87.3% | -0.01% (±0.01%) |
+| pcm4 | 141,812 | 590 | 88.9% | +0.00% (±0.00%) |
+| idle | 34,967 | 145 | 97.3% | +0.00% (±0.00%) |
 
-Ordered tightest first. `juno6` at **6.9% headroom** is the scene that matters:
+Ordered tightest first. `juno6` at **9.4% headroom** is the scene that matters:
 it is the one already close to overrunning the block budget, so it is the one
 whose delta you read first, whatever the others did.
 
-**Caveat on `fx_sine8`.** It is the only scene that did not come back "within
-noise", at -0.03% against a ±0.01% spread - and on a null run, where both sides
-are built from the same source, a non-zero delta is measurement artifact by
-definition. What it actually shows is that `fx_sine8` is the noisiest scene here
-and that a 2-capture estimate underestimates its spread. The cause is known: it
-carries reverb/chorus state across passes because AMY has no FX reset (see
-[Known AMY gap](#known-amy-gap-no-fx-state-reset)), which makes it legitimately
-less repeatable than the others. It stayed below the 0.5% threshold, so nothing
-was misreported - but treat sub-0.1% deltas on this scene with suspicion, and
-give it more captures (`--repeat 5`) before believing one.
+**A note on `fx_sine8`.** Its three passes render *different audio from each
+other* within a single boot, because AMY's reverb and chorus buffers are never
+reset between scenes (see [Known AMY gap](#known-amy-gap-no-fx-state-reset)). It
+is still perfectly usable as a benchmark, and the reason is worth being precise
+about: each pass is bit-identical *across boots*, and `abcompare.py` compares the
+two sides pass by pass. So the check that has to hold - a given pass renders the
+same CRC on every boot - does hold. The one that does not is "all passes agree
+with each other", and nothing depends on it.
+
+It is the noisiest scene here regardless, so it is the one where a marginal delta
+deserves the least trust. Two captures are enough to see it move: at
+`--repeat 2` it reads -0.03% against a ±0.01% spread and gets flagged, which on a
+null run can only be an artifact of an under-sampled noise estimate. At
+`--repeat 5`, above, it settles to -0.00%. If a sub-0.1% delta on this scene is
+load-bearing for a decision, spend the extra captures before believing it.
 
 ## Measured noise floor
 
