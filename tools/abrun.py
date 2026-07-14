@@ -94,7 +94,24 @@ def materialise_src(ref, dest):
     with tarfile.open(tar_path) as t:
         t.extractall(dest)
     os.remove(tar_path)
-    return os.path.join(dest, "src")
+
+    src_dir = os.path.join(dest, "src")
+
+    # git archive stamps every entry with the *commit* time, but the build dir is
+    # reused across runs and its objects carry the *wall-clock* time they were
+    # compiled at. Extract a ref whose commit predates the last build and ninja
+    # compares those two stamps, concludes the sources are older than the objects,
+    # and skips them - silently linking the PREVIOUS ref's code into a firmware
+    # labelled with this one. That is the worst possible failure here: it does not
+    # error, it produces a clean A/B report about two binaries that are not the
+    # ones named in it. Stamping the throwaway tree with "now" makes mtime mean
+    # what ninja assumes it means.
+    now = time.time()
+    for root, _dirs, files in os.walk(src_dir):
+        for name in files:
+            os.utime(os.path.join(root, name), (now, now))
+
+    return src_dir
 
 
 def ensure_guards(src_dir, ref, in_place):
