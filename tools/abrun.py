@@ -13,17 +13,20 @@ Usage (with the ESP-IDF environment sourced):
 
 What it does, and why each step is the way it is:
 
-1.  Materialises each side's src/ with `git archive` into a scratch dir. Read-only
-    by construction, so unlike switching branches it cannot disturb the AMY
-    working tree - and the *harness* always comes from this repo, so both sides
-    are measured with the same ruler no matter how far apart the two AMY refs are.
+1.  Snapshots each side's src/ into a scratch dir - committed refs with `git
+    archive`, the working tree with a copy. The AMY checkout is only ever read, so
+    unlike switching branches this cannot disturb it, and a run measures a fixed
+    snapshot rather than a tree that might move under it. The *harness* always
+    comes from this repo, so both sides are measured with the same ruler no matter
+    how far apart the two AMY refs are.
 
-2.  Refuses to build a src/ tree that lacks the two `#ifndef` guards from
-    AMY-EDITS.md. Without them a `-DAMY_SAMPLE_RATE=48000` compile definition is
-    silently clobbered by amy.h's own later `#define` and AMY_USE_FLOAT is
-    ignored, so the side would build at 44100/fixed and compare clean against a
-    48000/float side. That failure produces plausible numbers, which makes it far
-    more dangerous than a build error.
+2.  Applies the two `#ifndef` guards from AMY-EDITS.md to those snapshots. Without
+    them a `-DAMY_SAMPLE_RATE=48000` compile definition is silently clobbered by
+    amy.h's own later `#define` and AMY_USE_FLOAT is ignored, so the side would
+    build at 44100/fixed and compare clean against a 48000/float side. That failure
+    produces plausible numbers, which makes it far more dangerous than a build
+    error. Since the guards go into the snapshot, AMY itself needs no patching -
+    upstream refs and an unmodified checkout both work as-is.
 
 3.  Flashes BOTH firmwares once - side A into ota_0, side B into ota_1 - then
     alternates between them with a boot-partition switch and a reset. Swapping
@@ -132,27 +135,45 @@ def describe(ref):
 
 
 def materialise_src(ref, dest):
-    """Put `ref`'s src/ tree at dest/src. For the working tree, use it in place
-    so uncommitted experiments are measurable without a commit."""
-    if ref == WORKTREE:
-        return os.path.join(AMY_REPO, "src")
+    """Snapshot `ref`'s src/ tree into dest/src.
 
+    Every side is a throwaway copy, the working tree included. Copying it rather
+    than building it in place buys three things:
+
+    - the guards below can be applied to it, so an AMY checkout that does not
+      carry them is still measurable without being edited;
+    - the run measures a definite snapshot. Editing src/ midway through - between
+      the A build and the B build, say - cannot silently change what is being
+      measured underneath it;
+    - untracked files come along. A brand-new .c is picked up by the component's
+      GLOB, so a snapshot sees it where `git archive` or a stash would not.
+    """
     os.makedirs(dest, exist_ok=True)
-    tar_path = os.path.join(dest, "src.tar")
-    with open(tar_path, "wb") as f:
-        r = subprocess.run(["git", "archive", ref, "src/"],
-                           cwd=AMY_REPO, stdout=f)
-    if r.returncode != 0:
-        sys.exit(f"[abrun] git archive {ref} failed - is it a valid ref?")
-    with tarfile.open(tar_path) as t:
-        t.extractall(dest)
-    os.remove(tar_path)
-
     src_dir = os.path.join(dest, "src")
 
-    # git archive stamps every entry with the *commit* time, but the build dir is
-    # reused across runs and its objects carry the *wall-clock* time they were
-    # compiled at. Extract a ref whose commit predates the last build and ninja
+    # The scratch dirs are reused across runs. Left in place, a file that existed
+    # in the previous ref but not this one survives, and the component GLOBs *.c -
+    # so it would be compiled into a firmware whose ref never contained it.
+    if os.path.isdir(src_dir):
+        shutil.rmtree(src_dir)
+
+    if ref == WORKTREE:
+        shutil.copytree(os.path.join(AMY_REPO, "src"), src_dir)
+    else:
+        tar_path = os.path.join(dest, "src.tar")
+        with open(tar_path, "wb") as f:
+            r = subprocess.run(["git", "archive", ref, "src/"],
+                               cwd=AMY_REPO, stdout=f)
+        if r.returncode != 0:
+            sys.exit(f"[abrun] git archive {ref} failed - is it a valid ref?")
+        with tarfile.open(tar_path) as t:
+            t.extractall(dest)
+        os.remove(tar_path)
+
+    # Neither path produces fresh mtimes: git archive stamps every entry with the
+    # *commit* time, and copytree preserves the source's. The build dir, though, is
+    # reused across runs, and its objects carry the wall-clock time they were
+    # compiled at. Materialise a tree that predates the last build and ninja
     # compares those two stamps, concludes the sources are older than the objects,
     # and skips them - silently linking the PREVIOUS ref's code into a firmware
     # labelled with this one. That is the worst possible failure here: it does not
@@ -167,24 +188,25 @@ def materialise_src(ref, dest):
     return src_dir
 
 
-def ensure_guards(src_dir, ref, in_place):
+def ensure_guards(src_dir, ref):
     """Make a materialised src/ tree honour the bench's compile definitions.
 
     Upstream amy.h hard-#defines AMY_SAMPLE_RATE and AMY_USE_FIXEDPOINT, so an
     injected -DAMY_SAMPLE_RATE=48000 is silently clobbered (GCC keeps the last
-    definition and only warns) and -DAMY_USE_FLOAT is ignored outright. A
-    baseline built from such a tree would compile clean at 44100/fixed-point and
-    compare against a 48000/float head - plausible numbers, entirely wrong.
+    definition and only warns) and -DAMY_USE_FLOAT is ignored outright. A side
+    built from such a tree would compile clean at 44100/fixed-point and compare
+    against a 48000/float one - plausible numbers, entirely wrong.
 
-    Rather than require every baseline ref to carry the guards (upstream does
-    not, and merge bases are old), wrap the offending #defines here, in the
-    throwaway tree git archive just produced. The transform is what
-    AMY-EDITS.md describes: each #define becomes conditional. It changes
-    zero instructions unless a define is injected - and the same definitions are
+    Rather than require the guards to be present in AMY (upstream carries
+    neither, and merge bases are old), wrap the offending #defines here, in the
+    throwaway tree materialise_src just produced. The transform is what
+    AMY-EDITS.md describes: each #define becomes conditional. It changes zero
+    instructions unless a define is injected - and the same definitions are
     injected on both sides - so it cannot bias the comparison.
 
-    The working tree is never patched (in_place): a src/ you are editing is
-    yours, and it must already carry the guards.
+    This applies to every side, the working tree included. Because that side is a
+    snapshot rather than the checkout itself, no AMY tree is ever edited: you can
+    bench uncommitted work against an unpatched checkout.
     """
     amy_h = os.path.join(src_dir, "amy.h")
     if not os.path.exists(amy_h):
@@ -194,16 +216,6 @@ def ensure_guards(src_dir, ref, in_place):
     missing = [why for guard, why in REQUIRED_GUARDS if guard not in text]
     if not missing:
         return
-
-    if in_place:
-        sys.exit(
-            f"\n[abrun] REFUSING TO BUILD the working tree: src/amy.h is missing "
-            f"the build-config guard(s) for: {', '.join(missing)}.\n\n"
-            f"        Without them the bench's compile definitions are silently\n"
-            f"        ignored, so this side would build at 44100/fixed-point.\n"
-            f"        abrun patches a *materialised* baseline tree automatically,\n"
-            f"        but it will not edit your working tree. Apply the two\n"
-            f"        #ifndef guards from AMY-EDITS.md.\n")
 
     patched = re.sub(
         r"^(#define\s+AMY_SAMPLE_RATE\s+\d+.*)$",
@@ -412,8 +424,8 @@ def main():
 
     src_a = materialise_src(base, os.path.join(args.scratch, "A"))
     src_b = materialise_src(head, os.path.join(args.scratch, "B"))
-    ensure_guards(src_a, base, in_place=(base == WORKTREE))
-    ensure_guards(src_b, head, in_place=(head == WORKTREE))
+    ensure_guards(src_a, base)
+    ensure_guards(src_b, head)
 
     build_a = build_side("A", src_a, rev_a, args, env)
     build_b = build_side("B", src_b, rev_b, args, env)

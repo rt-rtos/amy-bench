@@ -88,18 +88,22 @@ without the board.
 
 `abrun.py` takes the *harness* from this repo for both sides and swaps only
 `src/`, so the two firmwares are measured with the same ruler no matter how far
-apart the two AMY refs are. Each side's `src/` is extracted with `git archive`
-into a scratch tree, so the AMY working tree is never touched - and `--head`
-defaults to that working tree, so uncommitted experiments are measurable without
-committing first.
+apart the two AMY refs are.
 
-Baselines older than the guards in [AMY-EDITS.md](AMY-EDITS.md) - which is most
-of them, since upstream carries neither - are handled automatically: `abrun.py`
-applies the two `#ifndef` wrappers to that throwaway scratch tree. They change
-no instructions unless a define is injected, and the same definitions go to both
-sides, so they cannot bias the comparison. Without them a baseline would
-silently build at 44100/fixed-point and compare, looking perfectly healthy,
-against a 48000/float head.
+Every side is a **snapshot**, taken into a scratch dir: committed refs with `git
+archive`, the working tree with a copy. The AMY checkout is only ever read, so a
+run cannot disturb it, and it cannot move underneath a run either - editing `src/`
+while a build is in flight can no longer change what is being measured. Because
+`--head` defaults to the working tree, uncommitted work is measurable without
+committing, stashing, or branching first.
+
+The guards in [AMY-EDITS.md](AMY-EDITS.md) go into those snapshots, so **AMY never
+needs patching**. Upstream carries neither guard and merge bases are old, so most
+sides arrive without them; `abrun.py` wraps the two `#define`s in the throwaway
+tree instead. They change no instructions unless a define is injected, and the
+same definitions go to both sides, so they cannot bias the comparison. Without
+them a side would silently build at 44100/fixed-point and compare, looking
+perfectly healthy, against a 48000/float one.
 
 ## What you can compare
 
@@ -115,8 +119,10 @@ python ../tools/abrun.py --port /dev/ttyACM0 --head exp/faster-filter --repeat 5
 ```
 
 **Your working tree, uncommitted.** The default `--head`. Edit `src/` in the AMY
-checkout, run, read the number - no commit, no stash, and the tree is never
-touched (each side is extracted with `git archive` into a scratch dir).
+checkout, run, read the number - no commit, no stash, no branch. The tree is
+snapshotted into the scratch dir like any other side, so it is only read, and it
+needs no preparation: untracked files come along, and the AMY-EDITS guards are
+applied to the snapshot rather than to your checkout.
 
 ```bash
 python ../tools/abrun.py --port /dev/ttyACM0 --repeat 5          # worktree vs merge-base
@@ -406,7 +412,7 @@ then, do not read `fx_sine8`'s three per-pass CRCs as a fault.
 |---|---|
 | `no such port` | board not attached. On WSL, `usbipd attach` first. |
 | `this interpreter has no pyserial` | running a python from outside the IDF env. Source `export.sh`. |
-| `REFUSING TO BUILD ... missing the build-config guard(s)` | the *working tree* lacks the AMY-EDITS guards. abrun patches materialised baselines automatically but will not edit your working tree. |
+| `could not apply the build-config guard(s)` | `amy.h` no longer matches the shape [AMY-EDITS.md](AMY-EDITS.md) describes, so the guards cannot be applied to that side's snapshot by pattern. Apply them by hand. abrun refuses to measure a tree whose sample rate and arithmetic mode it cannot verify. |
 | `RUN CONFIG MISMATCH` | the two firmwares disagree about sample rate / pacing / float / profiling. Never compare them. |
 | `capture TIMEOUT ... no run_end` | the board never finished a run: wedged, crashed, or a scene got much slower. The partial log is kept. |
 | `NON-DETERMINISTIC - the same pass renders differently on different boots` | real nondeterminism (unseeded PRNG, wall-clock dependence). The scene's output oracle is void until fixed. |

@@ -6,11 +6,14 @@ both `#ifndef` guards that change nothing unless a compile definition is
 injected.
 
 Upstream carries neither, so **you do not need to patch your AMY checkout**:
-`abrun.py` applies both to the throwaway scratch tree it extracts per side, never
-to the checkout itself. They are documented here because they are load-bearing -
-a `src/` tree without them cannot honour the bench's compile definitions, and the
-resulting run would compare a 44100/fixed side against a 48000/float one and look
-perfectly clean doing it.
+`abrun.py` applies both to the throwaway snapshot it takes per side, never to the
+checkout itself. That holds for every side, including your uncommitted working
+tree, which is snapshotted rather than built in place for exactly this reason.
+
+They are documented here because they are load-bearing - a `src/` tree without
+them cannot honour the bench's compile definitions, and the resulting run would
+compare a 44100/fixed side against a 48000/float one and look perfectly clean
+doing it.
 
 Both are upstream-PR candidates in their own right (config hygiene, no behavior
 change for existing builds).
